@@ -1,6 +1,6 @@
 import sys
 from PySide6.QtWidgets import QApplication
-from views.main_window import MainWindow
+from views.simulator_window import MainWindow
 
 if __name__ == '__main__':
     """ The main entry point for the fNIRS Simulator application. """
