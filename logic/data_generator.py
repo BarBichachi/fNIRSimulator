@@ -15,7 +15,7 @@ class DataGenerator:
         # --- File Playback Properties ---
         self.file_data = None
         self.playback_index = 0
-        self.num_channels = 16  # Default to 16-stream (8-channel)
+        self.num_channels = config.NUM_CHANNELS
 
     def set_state(self, new_state):
         """Updates the current simulation state."""
@@ -28,70 +28,70 @@ class DataGenerator:
         self.state_start_time = time.time()
 
     def load_file_data(self, data, num_channels):
-        # Loads data from a file into the generator.
-        self.file_data = data
-        self.num_channels = num_channels
+        """Loads file data (rows of 16 or 32 values). Controller should also set LSL rate from header."""
+        self.file_data = np.asarray(data, dtype=float)
+        self.num_channels = int(num_channels)
         self.playback_index = 0
+        print(f"DataGenerator: Loaded file data with {self.num_channels} channels.")
 
     def unload_file_data(self):
         # Clears the file data and resets to default.
         self.file_data = None
         self.playback_index = 0
-        self.num_channels = 16
+        self.num_channels = config.NUM_CHANNELS
+        print("DataGenerator: Unloaded file data. Reverting to live simulation (32 raw channels).")
+
+    def get_playback_status(self):
+        """Returns the current playback index and total samples."""
+        if self.file_data is not None:
+            return self.playback_index, len(self.file_data)
+        return 0, 0
 
     def _generate_live_sample(self):
-        # Generates a single sample of live, simulated data.
-        current_time = time.time()
-        elapsed_time = current_time - self.start_time
-        state_time = current_time - self.state_start_time
+        """Generate one live raw sample: 32 values = (Rx1 8 pairs + Rx2 8 pairs) × (850,760)."""
+        t = time.time() - self.start_time
+        st = time.time() - self.state_start_time
 
-        # --- Base physiological noise ---
-        base_noise = 10 * np.sin(2 * np.pi * 1.2 * elapsed_time) + \
-                     5 * np.sin(2 * np.pi * 0.25 * elapsed_time)
+        # small physiological baseline oscillation
+        base_noise = (config.NOISE_A * math.sin(2 * math.pi * 1.2 * t) +
+                      config.NOISE_B * math.sin(2 * math.pi * 0.25 * t))
 
+        # State-dependent offset (HRF or artifacts)
         signal_offset = 0.0
-
-        # --- Add state-specific signals based on state_time ---
         if self.state == "Cognitive Load":
-            # The HRF is active during the first 20 seconds of every 30-second interval.
-            cycle_time = state_time % 30
-            if cycle_time < 20:
-                signal_offset = self._generate_hrf_shape(cycle_time)
-
+            cycle = st % 30.0
+            if cycle < 20.0:
+                signal_offset = self._generate_hrf_shape(cycle) * config.HRF_SCALE
         elif self.state == "Artifact":
-            # The artifact is active during the first second of every 4-second interval.
-            if state_time % 4 < 1:
+            if (st % 4.0) < 1.0:
                 signal_offset = np.random.uniform(-config.ARTIFACT_SCALE, config.ARTIFACT_SCALE)
 
-        # --- Create the sample for all 8 channels (16 streams) ---
-        sample = []
-        base_intensity = config.BASE_INTENSITY
-        for i in range(8):
-            random_noise = np.random.normal(0, 2)
-            # Wavelength 1 (e.g. 760nm)
-            val1 = base_intensity + base_noise + random_noise + (signal_offset * 0.4)
-            # Wavelength 2 (e.g. 850nm)
-            val2 = base_intensity + base_noise + random_noise - signal_offset
-            sample.extend([val1, val2])
+        base_I = config.BASE_INTENSITY
 
-        return sample
+        def make_rx(rx_bias):
+            out = []
+            for _ in range(8):  # 8 physical channels
+                eps = np.random.normal(0.0, config.JITTER_STD)
+                i850 = (base_I + rx_bias + base_noise + eps + 0.4 * signal_offset) * config.WL850_GAIN + config.WL850_BIAS
+                i760 = (base_I + rx_bias + base_noise + eps - 1.0 * signal_offset) * config.WL760_GAIN + config.WL760_BIAS
+                out.extend([i850, i760])  # order: (850, 760)
+            return out
+
+        # Two healthy receivers with a tiny offset so they differ slightly
+        rx1 = make_rx(0.000)  # no offset
+        rx2 = make_rx(0.005)  # subtle offset (keeps both “good”)
+
+        return rx1 + rx2  # 32 values
 
     def _generate_playback_sample(self):
-        # Fetches the next sample from the loaded file data.
+        """Return next row from file, converting to raw-like intensity if needed."""
         if self.file_data is None:
-            return [0] * self.num_channels
+            return [0.0] * self.num_channels
 
-        # Get the current row of OD data
-        od_data = self.file_data[self.playback_index]
-
-        # --- Convert OD data to Simulated Raw Intensity ---
-        # This makes it compatible with our fNIRS_Monitor's DataProcessor
-        simulated_raw = 5000 - (od_data * 100)
-
-        # Advance the index and loop back to the start if we reach the end
+        row = self.file_data[self.playback_index]
         self.playback_index = (self.playback_index + 1) % len(self.file_data)
 
-        return simulated_raw
+        return row[: self.num_channels]
 
     def generate_sample(self):
         # Generates a sample based on the current mode (live or playback).

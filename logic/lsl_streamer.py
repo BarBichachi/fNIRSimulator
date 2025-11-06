@@ -6,10 +6,7 @@ from logic.data_generator import DataGenerator
 
 
 class LSLStreamer:
-    """
-    Manages the LSL data stream in a separate thread.
-    """
-
+    """ Manages the LSL data stream in a separate thread. """
     def __init__(self, data_generator: DataGenerator):
         # Initializes the LSLStreamer.
         self.data_generator = data_generator
@@ -46,8 +43,8 @@ class LSLStreamer:
         info = StreamInfo(config.STREAM_NAME, config.STREAM_TYPE, num_channels, self.sample_rate, 'float32',
                           config.STREAM_ID)
         channels = info.desc().append_child("channels")
-
         num_physical_channels = num_channels // 2
+
         for i in range(num_physical_channels):
             ch_name = f"CH{i + 1}"
             # This labeling is assumed, but standard for 2 wavelengths
@@ -57,11 +54,10 @@ class LSLStreamer:
         self.lsl_outlet = StreamOutlet(info)
         print(f"LSL stream started with {num_channels} channels at {self.sample_rate} Hz...")
 
+        period = 1.0 / max(1, int(self.sample_rate))
         while self.is_streaming:
             sample = self.data_generator.generate_sample()
             self.lsl_outlet.push_sample(sample)
-
-            # --- Maintain correct sample rate ---
-            time.sleep(1 / self.sample_rate)
+            time.sleep(period)
 
         print("LSL stream stopped.")

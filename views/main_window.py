@@ -1,163 +1,237 @@
-from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QGroupBox, QPushButton, QLabel, QButtonGroup)
-from PySide6.QtCore import QTimer
+import os
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QGroupBox, QPushButton, QLabel, QButtonGroup, QFileDialog, QMessageBox, QFrame
+)
+from PySide6.QtCore import Qt, QTimer
 
 import config
 from logic.data_generator import DataGenerator
 from logic.lsl_streamer import LSLStreamer
 from views.optode_pad_widget import OptodePadWidget
+from logic.file_loader import load_txt_file, parse_oxysoft_header
+from views.file_info_dialog import show_file_info_dialog
+
 
 class MainWindow(QMainWindow):
+    # The main application window for the fNIRS Simulator.
     def __init__(self):
         super().__init__()
+
+        # --- Application State ---
+        self.app_state = 'live'  # 'live' or 'playback'
+
+        # --- Backend Logic ---
         self.data_generator = DataGenerator()
         self.streamer = LSLStreamer(self.data_generator)
+
+        # --- UI Timer ---
         self.ui_update_timer = QTimer(self)
-        self.ui_update_timer.setInterval(1000 // config.UI_UPDATE_RATE_HZ)  # Update UI 10 times per second (10Hz)
+        self.ui_update_timer.setInterval(1000 // config.UI_UPDATE_RATE_HZ)
+        self.ui_update_timer.timeout.connect(self._update_data_display)
 
         self.state_colors = {
-            "Calm / Baseline": "#0288d1",  # Blue
-            "Cognitive Load": "#ffa000",  # Orange
-            "Artifact": "#5e35b1"  # Purple
+            "Calm": "#0288d1",
+            "Cognitive Load": "#ffa000",
+            "Artifact": "#5e35b1"
         }
+
+        self._init_ui()
+        self._connect_signals()
+        self._update_ui_for_state()  # Set initial UI state
+
+    def _init_ui(self):
+        # Initializes the UI elements for the simulator.
         self.setWindowTitle("fNIRS OctaMon Simulator")
-        self.setGeometry(100, 100, 750, 650)
         self._apply_styles()
 
-        central_widget = QWidget()
+        central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
+        self.setFixedWidth(650)
+        QTimer.singleShot(0, self._center_on_screen)
 
-        main_layout.addWidget(self._create_stream_control_group())
-        main_layout.addWidget(self._create_state_control_group())
-        main_layout.addWidget(self._create_optode_view_group())
+        # --- File Control Group ---
+        file_group = QGroupBox("File Control")
+        file_layout = QHBoxLayout()
+        self.load_file_button = QPushButton("Load File...")
+        self.remove_file_button = QPushButton("Remove File")
+        self.loaded_file_label = QLabel("Mode: Live Simulation")
+        file_layout.addWidget(self.load_file_button)
+        file_layout.addWidget(self.remove_file_button)
+        file_layout.addStretch()
+        file_layout.addWidget(self.loaded_file_label)
+        file_group.setLayout(file_layout)
+        main_layout.addWidget(file_group)
 
-        self._connect_signals()
-        self._update_current_state_label()  # Set initial state text
-
-    def _create_stream_control_group(self):
-        group = QGroupBox("Stream Control")
-        layout = QHBoxLayout()
-        self.status_label = QLabel(
-            "Stream Status: <span style='color: #d32f2f; font-weight: bold;'>NOT STREAMING</span>")
-
+        # --- Stream Control Group ---
+        stream_group = QGroupBox("Simulation Control")
+        stream_layout = QHBoxLayout()
+        self.status_label = QLabel("Status: <span style='color: red; font-weight: bold;'>NOT STREAMING</span>")
+        self.simulation_timer_label = QLabel("")
+        self.simulation_timer_label.setStyleSheet("font-weight: bold;")
         self.toggle_stream_button = QPushButton("Start Streaming")
-        self.toggle_stream_button.setObjectName("startButton")  # Start with green style
+        self.toggle_stream_button.setObjectName("startButton")
+        stream_layout.addWidget(self.status_label)
+        stream_layout.addStretch()
+        stream_layout.addWidget(self.simulation_timer_label)
+        stream_layout.addWidget(self.toggle_stream_button)
+        stream_group.setLayout(stream_layout)
+        main_layout.addWidget(stream_group)
 
-        layout.addWidget(self.status_label)
-        layout.addStretch()
-        layout.addWidget(self.toggle_stream_button)
-        group.setLayout(layout)
-        return group
-
-    def _create_state_control_group(self):
-        group = QGroupBox("Simulation State")
+        # --- Simulation State Group ---
+        self.state_group = QGroupBox("Simulation State")
         layout = QHBoxLayout()
-
-        self.current_state_label = QLabel("Current State: <b>Calm / Baseline</b>")
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.current_state_label = QLabel("Current State: <b>Calm</b>")
         self.state_button_group = QButtonGroup(self)
-
-        self.calm_button = self._create_state_button("Calm / Baseline", "calmButton")
+        self.calm_button = self._create_state_button("Calm", "calmButton")
         self.cognitive_button = self._create_state_button("Cognitive Load", "cognitiveButton")
         self.artifact_button = self._create_state_button("Artifact", "artifactButton")
-
+        self.state_button_group.setExclusive(True)
         self.calm_button.setChecked(True)
-
         layout.addWidget(self.current_state_label)
         layout.addStretch()
         layout.addWidget(self.calm_button)
         layout.addWidget(self.cognitive_button)
         layout.addWidget(self.artifact_button)
-        group.setLayout(layout)
-        return group
+        self.state_group.setLayout(layout)
+        main_layout.addWidget(self.state_group)
+
+        # --- Live Optode View Group ---
+        optode_view_group = QGroupBox("Live Optode View")
+        optode_view_layout = QHBoxLayout()
+
+        vline = QFrame()
+        vline.setFrameShape(QFrame.Shape.VLine)
+        vline.setFrameShadow(QFrame.Shadow.Sunken)
+
+        self.left_pad = OptodePadWidget("L")
+        self.right_pad = OptodePadWidget("R")
+        optode_view_layout.addWidget(self.left_pad)
+        optode_view_layout.addWidget(vline)
+        optode_view_layout.addWidget(self.right_pad)
+        optode_view_group.setLayout(optode_view_layout)
+        main_layout.addWidget(optode_view_group)
+
+        main_layout.addStretch()
+        QTimer.singleShot(0, self._update_current_state_label)
+
+    def _center_on_screen(self):
+        # Fit to content first (so we center the final size)
+        self.adjustSize()
+        geo = self.frameGeometry()
+        geo.moveCenter(self.screen().availableGeometry().center())
+        self.move(geo.topLeft())
 
     def _create_state_button(self, text, obj_name):
-        """Helper to create and configure a state button."""
+        # Helper to create and configure a state button.
         button = QPushButton(text)
         button.setObjectName(obj_name)
         button.setCheckable(True)
         self.state_button_group.addButton(button)
         return button
 
-    def _create_optode_view_group(self):
-        group = QGroupBox("Live Optode View")
-        layout = QHBoxLayout()
-
-        left_hemi_group = QGroupBox("Left Hemisphere")
-        left_hemi_layout = QVBoxLayout()
-        self.left_pad = OptodePadWidget("L")
-        left_hemi_layout.addWidget(self.left_pad)
-        left_hemi_group.setLayout(left_hemi_layout)
-
-        right_hemi_group = QGroupBox("Right Hemisphere")
-        right_hemi_layout = QVBoxLayout()
-        self.right_pad = OptodePadWidget("R")
-        right_hemi_layout.addWidget(self.right_pad)
-        right_hemi_group.setLayout(right_hemi_layout)
-
-        #layout.addStretch(1)  # Add stretch before
-        layout.addWidget(left_hemi_group)
-        layout.addWidget(right_hemi_group)
-        #layout.addStretch(1)  # Add stretch after
-        group.setLayout(layout)
-        return group
-
     def _connect_signals(self):
-        """Connect button clicks to their handler functions."""
+        # Connects all UI signals to their handler methods.
         self.toggle_stream_button.clicked.connect(self._toggle_streaming)
+        self.load_file_button.clicked.connect(self._load_file)
+        self.remove_file_button.clicked.connect(self._remove_file)
+
+        # --- Connect radio buttons to update the generator's state ---
         self.state_button_group.buttonClicked.connect(self._update_current_state_label)
-        self.ui_update_timer.timeout.connect(self._update_data_display)
+
+    def _update_ui_for_state(self):
+        # Updates the UI based on whether a file is loaded or not.
+        if self.app_state == 'live':
+            self.state_group.setVisible(True)
+            self.toggle_stream_button.setText("Start Streaming")
+            self.remove_file_button.setEnabled(False)
+            self.load_file_button.setEnabled(True)
+            self.loaded_file_label.setText("Mode: <b style='color: #0288d1;'>Live Simulation</b>")
+            self.simulation_timer_label.setText("")
+        elif self.app_state == 'playback':
+            self.state_group.setVisible(False)
+            self.toggle_stream_button.setText("Start Simulation")
+            self.remove_file_button.setEnabled(True)
+            self.load_file_button.setEnabled(False)
+            self.loaded_file_label.setText("Mode: <b style='color: #4CAF50;'>File Playback</b>")
+
+    def _load_file(self):
+        # Opens a file dialog to load an OxySoft .txt file.
+        filepath, _ = QFileDialog.getOpenFileName(self, "Open OxySoft TXT File", "", "Text Files (*.txt)")
+        if not filepath:
+            return
+
+        metadata, data_start_line = parse_oxysoft_header(filepath)
+        if metadata is None:
+            QMessageBox.critical(self, "Error", "Could not parse file header. Is this a valid OxySoft TXT export?")
+            return
+
+        data, num_channels = load_txt_file(filepath, data_start_line)
+        if data is None:
+            QMessageBox.critical(self, "Error", "Could not load numerical data from file.")
+            return
+
+        # --- Show metadata to user ---
+        show_file_info_dialog(self, os.path.basename(filepath), metadata)
+
+        # --- Configure backend ---
+        self.data_generator.load_file_data(data, num_channels)
+        self.streamer.set_sample_rate(metadata['Sample Rate'])
+
+        self.app_state = 'playback'
+        self.loaded_file_label.setText(f"Mode: <b style='color: #4CAF50;'>File Playback ({num_channels} streams)</b>")
+        self._update_ui_for_state()
+
+    def _remove_file(self):
+        # Unloads the file and switches back to live simulation mode.
+        self.data_generator.unload_file_data()
+        self.streamer.set_sample_rate(config.SAMPLE_RATE)
+        self.app_state = 'live'
+        self._update_ui_for_state()
 
     def _toggle_streaming(self):
-        is_currently_streaming = self.toggle_stream_button.objectName() == "stopButton"
-
-        if is_currently_streaming:
-            # --- Logic for STOPPING ---
-            self.streamer.stop()  # <<< CHANGE
+        # Starts or stops the LSL stream.
+        if self.streamer.is_streaming:
+            self.streamer.stop()
             self.ui_update_timer.stop()
-            self.status_label.setText(
-                "Stream Status: <span style='color: #d32f2f; font-weight: bold;'>NOT STREAMING</span>")
-            self.toggle_stream_button.setText("Start Streaming")
-            self.toggle_stream_button.setObjectName("startButton")
-        else:
-            # --- Logic for STARTING ---
-            self.streamer.start()  # <<< CHANGE
-            self.ui_update_timer.start()
-            self.status_label.setText(
-                "Stream Status: <span style='color: #388e3c; font-weight: bold;'>STREAMING</span>")
-            self.toggle_stream_button.setText("Stop Streaming")
-            self.toggle_stream_button.setObjectName("stopButton")
+            self.status_label.setText("Status: <span style='color: red; font-weight: bold;'>NOT STREAMING</span>")
 
-        self.toggle_stream_button.style().unpolish(self.toggle_stream_button)
-        self.toggle_stream_button.style().polish(self.toggle_stream_button)
+            # --- Re-enable controls ---
+            self._update_ui_for_state()
+        else:
+            self.streamer.start()
+            self.ui_update_timer.start()
+            self.status_label.setText("Status: <span style='color: green; font-weight: bold;'>STREAMING</span>")
+
+            # --- Disable controls ---
+            self.load_file_button.setEnabled(False)
+            self.remove_file_button.setEnabled(False)
+            self.toggle_stream_button.setText("Stop Simulation" if self.app_state == 'playback' else "Stop Streaming")
 
     def _update_current_state_label(self):
-        """Updates the state label and the background color of the state buttons."""
+        # Updates the state label and the background color of the state buttons.
         checked_button = self.state_button_group.checkedButton()
         if not checked_button:
             return
 
-        self.data_generator.restart_state_timer()
-
-        # Update the label text and color
         state_text = checked_button.text()
+        self.data_generator.set_state(state_text)
+        self.data_generator.restart_state_timer()
         state_color = self.state_colors.get(state_text, "#333")
         self.current_state_label.setText(f"Current State: <b style='color: {state_color};'>{state_text}</b>")
 
-        # Programmatically update button styles for clarity
         for button in self.state_button_group.buttons():
             if button.isChecked():
-                # Set the specific color for the selected button
                 button.setStyleSheet(f"""
                     QPushButton {{
                         background-color: {self.state_colors.get(button.text())};
-                        color: white;
-                        border: 1px solid #555;
+                        color: white; border: 1px solid #555;
                         border-radius: 5px; padding: 8px 16px; font-size: 14px;
                     }}
                 """)
             else:
-                # Reset the other buttons to the default gray style
                 button.setStyleSheet("""
                     QPushButton {
                         background-color: #e0e0e0; border: 1px solid #b0b0b0;
@@ -166,10 +240,55 @@ class MainWindow(QMainWindow):
                     QPushButton:hover { background-color: #e9e9e9; }
                 """)
 
+    def _update_data_display(self):
+        # Update UI once per tick while streaming
+        if not self.streamer.is_streaming:
+            return
+
+        # Get the next sample that will be streamed
+        sample = self.data_generator.generate_sample()
+
+        # --- Playback timer (only in file mode) ---
+        if self.app_state == 'playback':
+            cur_idx, total = self.data_generator.get_playback_status()
+            rate = max(1, int(self.streamer.sample_rate or 1))
+            self.simulation_timer_label.setText(f"{cur_idx / rate:.1f}s / {total / rate:.1f}s")
+        else:
+            self.simulation_timer_label.setText("")
+
+        # --- Build pad payloads: each item = (i850, i760) for 4 channels ---
+        def to_pairs(chunk16):
+            # chunk16 = 16 numbers = 8 streams = 4 channels × (850,760) FOR THIS PAD
+            return [(chunk16[2 * i], chunk16[2 * i + 1]) for i in range(4)]
+
+        if len(sample) >= 32:
+            rx1 = sample[0:16]  # receiver 1 → left pad
+            rx2 = sample[16:32]  # receiver 2 → right pad
+            left_items = to_pairs(rx1)
+            right_items = to_pairs(rx2)
+        elif len(sample) == 16:
+            # Single-receiver data: show on left; clear right
+            rx = sample[0:16]
+            left_items = to_pairs(rx)
+            right_items = [(float('nan'), float('nan'))] * 4
+        else:
+            # Unexpected width; skip this tick safely
+            return
+
+        # --- Update pads ---
+        self.left_pad.update_raw_channels(left_items)
+        self.right_pad.update_raw_channels(right_items)
+
+    def closeEvent(self, event):
+        # Ensures the stream is stopped when the window is closed.
+        self.streamer.stop()
+        event.accept()
+
     def _apply_styles(self):
-        """Applies a consistent, visible stylesheet to the application."""
+        # Applies a consistent stylesheet to the application.
+        # This is the user's requested style
         self.setStyleSheet("""
-            QWidget { background-color: #f5f5f5; color: #333; font-family: Arial; }
+            QWidget { background-color: #f0f0f0; color: #333; font-family: Arial; }
             QGroupBox {
                 font: bold 14px; border: 1px solid #ccc; border-radius: 8px; margin-top: 1em;
             }
@@ -189,26 +308,13 @@ class MainWindow(QMainWindow):
             QPushButton#stopButton { background-color: #ffcdd2; } /* Light Red */
 
             /* --- State Button Colors --- */
-            QPushButton:checkable:checked#calmButton {
+            QPushButton#calmButton:checked {
                 background-color: #b3e5fc; border-color: #0288d1; /* Light Blue */
             }
-            QPushButton:checkable:checked#cognitiveButton {
+            QPushButton#cognitiveButton:checked {
                 background-color: #ffecb3; border-color: #ffa000; /* Light Orange */
             }
-            QPushButton:checkable:checked#artifactButton {
+            QPushButton#artifactButton:checked {
                 background-color: #d1c4e9; border-color: #5e35b1; /* Light Purple */
             }
         """)
-
-    def _update_data_display(self):
-        """Fetches a new sample from the generator and updates the UI."""
-        # Set the generator's state based on which button is checked
-        current_state = self.state_button_group.checkedButton().text()
-        self.data_generator.set_state(current_state)
-
-        # Generate one new sample of data
-        sample = self.data_generator.generate_sample()
-
-        # Update the UI pads with the new data
-        self.left_pad.update_data(sample[0:4])
-        self.right_pad.update_data(sample[4:8])

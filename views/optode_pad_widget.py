@@ -1,4 +1,7 @@
-from PySide6.QtWidgets import QWidget, QGridLayout, QLabel, QVBoxLayout
+import math
+
+import numpy as np
+from PySide6.QtWidgets import QWidget, QGridLayout, QLabel, QVBoxLayout, QHBoxLayout
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
@@ -38,34 +41,60 @@ class OptodePadWidget(QWidget):
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(5)
-        layout.setAlignment(Qt.AlignCenter)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Create the transmitter widget
         tx_widget = OptodeWidget(f"Tx{tx_num}", "#ffd700")  # Gold Yellow
 
         # Create the data labels
         channel_label = QLabel(channel_label_text)
-        channel_label.setAlignment(Qt.AlignCenter)
-        channel_label.setFont(QFont("Arial", 9, QFont.Bold))
+        channel_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        channel_label.setFont(QFont("Arial", 9, QFont.Weight.Bold))
 
-        value_label = QLabel("-.---")
-        value_label.setAlignment(Qt.AlignCenter)
-        value_label.setFont(QFont("Arial", 10))
+        # Two-line values row + small Rx badge to the right
+        # First make a horizontal strip: [ values (VBox) | RX (badge) ]
+        h = QHBoxLayout()
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(8)
+        h.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # Add widgets to the container's layout
+        # Two stacked lines for 850/760
+        values_box = QWidget()
+        values_v = QVBoxLayout(values_box)
+        values_v.setContentsMargins(0, 0, 0, 0)
+        values_v.setSpacing(2)
+        l850 = QLabel("850: —")
+        l850.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        l850.setFont(QFont("Arial", 10))
+        l760 = QLabel("760: —")
+        l760.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        l760.setFont(QFont("Arial", 10))
+        values_v.addWidget(l850)
+        values_v.addWidget(l760)
+        h.addWidget(values_box)
+
         layout.addWidget(tx_widget)
         layout.addWidget(channel_label)
-        layout.addWidget(value_label)
+        layout.addLayout(h)
 
-        # Store a reference for future data updates
-        self.data_labels[tx_num] = value_label
+        # Keep refs for updates
+        self.data_labels[tx_num] = {'l850': l850, 'l760': l760}
 
         return container
 
-    def update_data(self, data_values):
-        """Updates the numerical data labels with new values."""
-        for i, value in enumerate(data_values):
-            channel_num = i + 1
-            if channel_num in self.data_labels:
-                # Format the raw intensity value as an integer
-                self.data_labels[channel_num].setText(f"{int(value)}")
+    def update_raw_channels(self, items):
+        """
+        items: list of 4 tuples -> (i850: float|nan, i760: float|nan)
+        """
+        for idx, pair in enumerate(items):
+            tx_num = idx + 1
+            if tx_num not in self.data_labels:
+                continue
+            i850, i760 = pair if pair and len(pair) == 2 else (float("nan"), float("nan"))
+
+            def fmt(v):
+                return "—" if v is None or not np.isfinite(v) else f"{v:.3f}"
+
+            lbls = self.data_labels[tx_num]
+            lbls['l850'].setText(f"850: {fmt(i850)}")
+            lbls['l760'].setText(f"760: {fmt(i760)}")

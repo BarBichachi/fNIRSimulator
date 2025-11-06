@@ -2,21 +2,24 @@
 STREAM_NAME = 'fNIRSimulator'
 STREAM_TYPE = 'fNIRS'
 STREAM_ID = 'barbimulator'
-SAMPLE_RATE = 50  # The rate of data generation and streaming, in Hz.
+SAMPLE_RATE = 10.0  # Data generation and streaming rate (Hz)
+NUM_CHANNELS = 32  # 8 optodes × 2 wavelengths × 2 receivers
+EXPECTED_PHYSICAL_CHANNELS = NUM_CHANNELS // 2
+CHANNEL_NAMES = [f"{prefix}{i}" for prefix in ("L", "R") for i in range(1, 5)]
+
+# --- Wavelength Calibration ---
+WL850_GAIN = 1.0
+WL760_GAIN = 0.985
+WL850_BIAS = 0.005
+WL760_BIAS = -0.003
 
 # --- Data Generation Configuration ---
-# The baseline raw light intensity value that the simulation hovers around.
-BASE_INTENSITY = 5000
-
-# A scaling factor for the "Cognitive Load" hemodynamic response.
-# Higher values make the dip in raw data more pronounced.
-HRF_SCALE = 1500
-
-# A scaling factor for the "Artifact" state.
-# This determines the max size of the random jump in the data.
-ARTIFACT_SCALE = 500
+BASE_INTENSITY = 1.2  # Baseline intensity level
+NOISE_A = 0.010       # Amplitude of fast (1.2 Hz) noise component
+NOISE_B = 0.005       # Amplitude of slow (0.25 Hz) noise component
+JITTER_STD = 0.002    # Random Gaussian jitter per sample
+HRF_SCALE = 1.0       # Cognitive load response scale
+ARTIFACT_SCALE = 0.05 # Artifact amplitude scale
 
 # --- UI Configuration ---
-# The rate at which the data display on the UI updates, in Hz.
-# This can be slower than the SAMPLE_RATE. 10Hz is smooth for visual feedback.
-UI_UPDATE_RATE_HZ = 10
+UI_UPDATE_RATE_HZ = 10  # UI refresh rate (Hz)
