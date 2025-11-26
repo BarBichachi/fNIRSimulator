@@ -1,8 +1,8 @@
 # --- LSL Stream Configuration ---
 STREAM_NAME = 'fNIRSimulator'
-STREAM_TYPE = 'fNIRS'
+STREAM_TYPE = 'NIRS'
 STREAM_ID = 'barbimulator'
-SAMPLE_RATE = 10.0  # Data generation and streaming rate (Hz)
+SAMPLE_RATE = 50.0  # Data generation and streaming rate (Hz)
 NUM_CHANNELS = 32  # 8 optodes × 2 wavelengths × 2 receivers
 EXPECTED_PHYSICAL_CHANNELS = NUM_CHANNELS // 2
 CHANNEL_NAMES = [f"{prefix}{i}" for prefix in ("L", "R") for i in range(1, 5)]

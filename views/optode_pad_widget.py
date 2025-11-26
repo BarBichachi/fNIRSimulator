@@ -63,10 +63,10 @@ class OptodePadWidget(QWidget):
         values_v = QVBoxLayout(values_box)
         values_v.setContentsMargins(0, 0, 0, 0)
         values_v.setSpacing(2)
-        l850 = QLabel("850: —")
+        l850 = QLabel("850nm: —")
         l850.setAlignment(Qt.AlignmentFlag.AlignCenter)
         l850.setFont(QFont("Arial", 10))
-        l760 = QLabel("760: —")
+        l760 = QLabel("760nm: —")
         l760.setAlignment(Qt.AlignmentFlag.AlignCenter)
         l760.setFont(QFont("Arial", 10))
         values_v.addWidget(l850)
@@ -96,5 +96,5 @@ class OptodePadWidget(QWidget):
                 return "—" if v is None or not np.isfinite(v) else f"{v:.3f}"
 
             lbls = self.data_labels[tx_num]
-            lbls['l850'].setText(f"850: {fmt(i850)}")
-            lbls['l760'].setText(f"760: {fmt(i760)}")
+            lbls['l850'].setText(f"850nm: {fmt(i850)}")
+            lbls['l760'].setText(f"760nm: {fmt(i760)}")

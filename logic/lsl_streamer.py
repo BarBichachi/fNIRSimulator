@@ -36,12 +36,14 @@ class LSLStreamer:
 
     def _stream_loop(self):
         """The main loop for generating and pushing data to LSL."""
-        # --- Get channel count from generator (16 or 32) ---
+        # Get channel count from generator (e.g., 32 for 16 channels × 2 wavelengths).
         num_channels = self.data_generator.num_channels
 
-        # --- Setup the LSL stream info dynamically ---
+        # Setup the LSL stream info dynamically.
         info = StreamInfo(config.STREAM_NAME, config.STREAM_TYPE, num_channels, self.sample_rate, 'float32',
                           config.STREAM_ID)
+
+        # Add basic channel metadata for wavelengths.
         channels = info.desc().append_child("channels")
         num_physical_channels = num_channels // 2
 

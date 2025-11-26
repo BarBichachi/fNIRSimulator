@@ -17,6 +17,13 @@ class DataGenerator:
         self.playback_index = 0
         self.num_channels = config.NUM_CHANNELS
 
+        # --- Per-channel personality (for 8 physical channels) ---
+        # Slightly different oscillation freq, phase, amplitude and HRF gain
+        self.channel_freq = np.linspace(1.0, 1.6, 8)          # Hz
+        self.channel_phase = np.linspace(0.0, math.pi, 8)     # radians
+        self.channel_gain = np.linspace(0.8, 1.2, 8)          # noise amplitude
+        self.channel_hrf_gain = np.linspace(0.6, 1.4, 8)      # HRF sensitivity
+
     def set_state(self, new_state):
         """Updates the current simulation state."""
         if self.state != new_state:
@@ -51,35 +58,59 @@ class DataGenerator:
         """Generate one live raw sample: 32 values = (Rx1 8 pairs + Rx2 8 pairs) × (850,760)."""
         t = time.time() - self.start_time
         st = time.time() - self.state_start_time
-
-        # small physiological baseline oscillation
-        base_noise = (config.NOISE_A * math.sin(2 * math.pi * 1.2 * t) +
-                      config.NOISE_B * math.sin(2 * math.pi * 0.25 * t))
+        freq_variation = [1.2 + i * 0.05 for i in range(8)]
 
         # State-dependent offset (HRF or artifacts)
-        signal_offset = 0.0
+        signal_offset_base  = 0.0
         if self.state == "Cognitive Load":
             cycle = st % 30.0
             if cycle < 20.0:
-                signal_offset = self._generate_hrf_shape(cycle) * config.HRF_SCALE
+                signal_offset_base  = self._generate_hrf_shape(cycle) * config.HRF_SCALE
         elif self.state == "Artifact":
             if (st % 4.0) < 1.0:
-                signal_offset = np.random.uniform(-config.ARTIFACT_SCALE, config.ARTIFACT_SCALE)
+                signal_offset_base  = np.random.uniform(-config.ARTIFACT_SCALE, config.ARTIFACT_SCALE)
 
         base_I = config.BASE_INTENSITY
 
-        def make_rx(rx_bias):
+        def make_rx(rx_bias: float, rx_index: int):
             out = []
-            for _ in range(8):  # 8 physical channels
+            for ch in range(8):  # 8 physical channels
+                # Per-channel parameters
+                freq = self.channel_freq[ch]
+                phase = self.channel_phase[ch] + rx_index * 0.3  # small extra phase per receiver
+                gain = self.channel_gain[ch]
+                hrf_gain = self.channel_hrf_gain[ch]
+
+                # small physiological baseline oscillation (per-channel)
+                base_noise = (
+                        config.NOISE_A * gain * math.sin(2 * math.pi * freq * t + phase) +
+                        config.NOISE_B * math.sin(2 * math.pi * 0.25 * t + phase * 0.3)
+                )
+
+                # Per-channel state offset
+                local_offset = signal_offset_base * hrf_gain
+
+                # For artifacts, add a bit of extra random per-channel wiggle
+                if self.state == "Artifact" and signal_offset_base != 0.0:
+                    jitter = np.random.uniform(-config.ARTIFACT_SCALE, config.ARTIFACT_SCALE)
+                    local_offset += jitter * (0.5 + 0.5 * gain)
+
+                # random sensor jitter
                 eps = np.random.normal(0.0, config.JITTER_STD)
-                i850 = (base_I + rx_bias + base_noise + eps + 0.4 * signal_offset) * config.WL850_GAIN + config.WL850_BIAS
-                i760 = (base_I + rx_bias + base_noise + eps - 1.0 * signal_offset) * config.WL760_GAIN + config.WL760_BIAS
-                out.extend([i850, i760])  # order: (850, 760)
+
+                i850 = (
+                                   base_I + rx_bias + base_noise + eps + 0.4 * local_offset) * config.WL850_GAIN + config.WL850_BIAS
+                i760 = (
+                                   base_I + rx_bias + base_noise + eps - 1.0 * local_offset) * config.WL760_GAIN + config.WL760_BIAS
+
+                # order: (850, 760)
+                out.extend([i850, i760])
+
             return out
 
         # Two healthy receivers with a tiny offset so they differ slightly
-        rx1 = make_rx(0.000)  # no offset
-        rx2 = make_rx(0.005)  # subtle offset (keeps both “good”)
+        rx1 = make_rx(0.000, 0)   # receiver 1
+        rx2 = make_rx(0.005, 1)   # receiver 2
 
         return rx1 + rx2  # 32 values
 
