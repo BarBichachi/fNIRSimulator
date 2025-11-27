@@ -63,12 +63,17 @@ class OptodePadWidget(QWidget):
         values_v = QVBoxLayout(values_box)
         values_v.setContentsMargins(0, 0, 0, 0)
         values_v.setSpacing(2)
+
         l850 = QLabel("850nm: —")
         l850.setAlignment(Qt.AlignmentFlag.AlignCenter)
         l850.setFont(QFont("Arial", 10))
+        l850.setStyleSheet("color: #e0e0e0;")
+
         l760 = QLabel("760nm: —")
         l760.setAlignment(Qt.AlignmentFlag.AlignCenter)
         l760.setFont(QFont("Arial", 10))
+        l760.setStyleSheet("color: #e0e0e0;")
+
         values_v.addWidget(l850)
         values_v.addWidget(l760)
         h.addWidget(values_box)

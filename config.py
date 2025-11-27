@@ -23,3 +23,10 @@ ARTIFACT_SCALE = 0.05 # Artifact amplitude scale
 
 # --- UI Configuration ---
 UI_UPDATE_RATE_HZ = 10  # UI refresh rate (Hz)
+
+# --- Simulation State Colors ---
+STATE_COLORS = {
+    "Calm": "#0288d1",         # Blue
+    "Cognitive Load": "#ffa000", # Orange
+    "Artifact": "#5e35b1"      # Purple
+}

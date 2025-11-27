@@ -136,3 +136,13 @@ class DataGenerator:
         n, lambda_val = 5, 1.5
         hrf = (t ** (n - 1) * np.exp(-t / lambda_val)) / (lambda_val ** n * math.factorial(n - 1))
         return hrf * config.HRF_SCALE
+
+    def get_total_samples(self):
+        """Returns the total number of samples in the loaded file."""
+        return len(self.file_data) if self.file_data is not None else 0
+
+    def set_playback_index(self, index):
+        """Jump to a specific sample index (Seeking)."""
+        if self.file_data is not None:
+            # Ensure index is within bounds
+            self.playback_index = max(0, min(index, len(self.file_data) - 1))
