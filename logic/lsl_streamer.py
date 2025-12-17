@@ -1,6 +1,6 @@
 import threading
 import time
-from pylsl import StreamInfo, StreamOutlet
+from pylsl import StreamInfo, StreamOutlet, local_clock
 import config
 from logic.data_generator import DataGenerator
 
@@ -14,11 +14,12 @@ class LSLStreamer:
         self.lsl_outlet = None
         self.lsl_thread = None
         self.sample_rate = config.SAMPLE_RATE  # Default to config's live rate
+        self.last_sample = None  # UI reads this (do not advance generator in UI)
 
     def set_sample_rate(self, rate):
         """Sets the streaming sample rate (e.g., 10Hz from file)."""
-        self.sample_rate = rate
-        print(f"LSLStreamer: Sample rate set to {rate} Hz")
+        self.sample_rate = float(rate)
+        print(f"LSLStreamer: Sample rate set to {self.sample_rate} Hz")
 
     def start(self):
         """Starts the LSL streaming thread."""
@@ -37,29 +38,33 @@ class LSLStreamer:
     def _stream_loop(self):
         """The main loop for generating and pushing data to LSL."""
         # Get channel count from generator (e.g., 32 for 16 channels × 2 wavelengths).
-        num_channels = self.data_generator.num_channels
+        num_channels = len(config.LSL_CHANNEL_LABELS)
 
         # Setup the LSL stream info dynamically.
-        info = StreamInfo(config.STREAM_NAME, config.STREAM_TYPE, num_channels, self.sample_rate, 'float32',
-                          config.STREAM_ID)
+        info = StreamInfo(config.STREAM_NAME, config.STREAM_TYPE, num_channels, self.sample_rate, 'float32', config.STREAM_ID)
 
         # Add basic channel metadata for wavelengths.
         channels = info.desc().append_child("channels")
-        num_physical_channels = num_channels // 2
-
-        for i in range(num_physical_channels):
-            ch_name = f"CH{i + 1}"
-            # This labeling is assumed, but standard for 2 wavelengths
-            channels.append_child("channel").append_child_value("label", f"{ch_name}_760nm")
-            channels.append_child("channel").append_child_value("label", f"{ch_name}_850nm")
+        for lbl in config.LSL_CHANNEL_LABELS:
+            channels.append_child("channel").append_child_value("label", lbl)
 
         self.lsl_outlet = StreamOutlet(info)
         print(f"LSL stream started with {num_channels} channels at {self.sample_rate} Hz...")
 
-        period = 1.0 / max(1, int(self.sample_rate))
+        rate = max(0.0001, float(self.sample_rate))
+        period = 1.0 / rate
+        next_t = time.perf_counter()
+
         while self.is_streaming:
+            next_t += period
+
             sample = self.data_generator.generate_sample()
-            self.lsl_outlet.push_sample(sample)
-            time.sleep(period)
+            self.last_sample = sample
+            self.lsl_outlet.push_sample(sample, local_clock())
+
+            now = time.perf_counter()
+            remaining = next_t - now
+            if remaining > 0:
+                time.sleep(min(remaining, 0.01))
 
         print("LSL stream stopped.")

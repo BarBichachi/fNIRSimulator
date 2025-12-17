@@ -3,8 +3,8 @@ STREAM_NAME = 'fNIRSimulator'
 STREAM_TYPE = 'NIRS'
 STREAM_ID = 'barbimulator'
 SAMPLE_RATE = 50.0  # Data generation and streaming rate (Hz)
-NUM_CHANNELS = 32  # 8 optodes × 2 wavelengths × 2 receivers
-EXPECTED_PHYSICAL_CHANNELS = NUM_CHANNELS // 2
+NUM_CHANNELS = 33  # Streamed sample layout: OD32 + ADC1
+EXPECTED_PHYSICAL_CHANNELS = 8  # OctaMon: 8 effective channels used by monitor/UI
 CHANNEL_NAMES = [f"{prefix}{i}" for prefix in ("L", "R") for i in range(1, 5)]
 
 # --- Wavelength Calibration ---
@@ -30,3 +30,16 @@ STATE_COLORS = {
     "Cognitive Load": "#ffa000", # Orange
     "Artifact": "#5e35b1"      # Purple
 }
+
+# --- OxySoft Placeholder / ADC ---
+PLACEHOLDER_HI = 4.81625
+PLACEHOLDER_EPS = 0.02
+ADC_DEFAULT = 1.48063
+
+# --- OxySoft Direct Channel Mapping (OD) Labels ---
+# Order: D1_Rx1_L1..L16, D1_Rx2_L1..L16, ADC1
+LSL_CHANNEL_LABELS = (
+    [f"D1_Rx1_L{i}" for i in range(1, 17)] +
+    [f"D1_Rx2_L{i}" for i in range(1, 17)] +
+    ["ADC1"]
+)

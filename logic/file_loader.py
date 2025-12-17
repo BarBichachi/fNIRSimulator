@@ -1,6 +1,6 @@
 import numpy as np
 import re
-
+import config
 
 def parse_oxysoft_header(filepath):
     """
@@ -93,26 +93,51 @@ def parse_oxysoft_header(filepath):
 
 def load_txt_file(filepath, data_start_line):
     """
-    Loads all numerical data from an OxySoft .txt export file,
-    starting from the specified line.
+    Loads numerical data from OxySoft .txt export.
+
+    Target output for playback:
+      - 33 values per sample: OD32 (Rx1 L1..L16, Rx2 L1..L16) + ADC1
     """
     try:
         data = np.loadtxt(filepath, skiprows=data_start_line)
 
-        num_cols = data.shape[1]
-        if num_cols < 17:
-            print(f"FileLoader: Error - Expected at least 17 columns, found {num_cols}")
-            return None, 0
+        # Expected Experiment-like layout:
+        # col0 = sample index
+        # col1..32 = OD32
+        # col33 = ADC1
+        # col34 = Event (optional)
+        cols = data.shape[1]
 
-        # 32 channels + 1 sample-index column = 33 columns min
-        if num_cols >= 33:
-            clean_data = data[:, 1:33]  # columns 1..32
-        else:
-            clean_data = data[:, 1:17]  # assume 8 channels (16 data cols)
+        if cols >= 34:
+            # sample + OD32 + ADC + (event optional)
+            clean = data[:, 1:34]  # OD32 + ADC (ignore event)
+            return clean, 33
 
-        num_channels = clean_data.shape[1]
-        print(f"FileLoader: Successfully loaded data with {num_channels} channels.")
-        return clean_data, num_channels
+        if cols == 33:
+            # sample + OD32 (no ADC)
+            od32 = data[:, 1:33]
+            adc = np.zeros((od32.shape[0], 1), dtype=float)
+            clean = np.hstack((od32, adc))
+            return clean, 33
+
+        if cols >= 17:
+            # Legacy "8ch × 2λ" exports: sample + 16
+            # Convert to OD32+ADC by placing values in the same positions your monitor maps:
+            # Rx1 L1..L8  -> od[0..7]
+            # Rx2 L9..L16 -> od[24..31]
+            raw16 = data[:, 1:17]
+            n = raw16.shape[0]
+
+            od32 = np.full((n, 32), config.PLACEHOLDER_HI, dtype=float)
+            od32[:, 0:8] = raw16[:, 0:8]
+            od32[:, 24:32] = raw16[:, 8:16]
+
+            adc = np.zeros((n, 1), dtype=float)
+            clean = np.hstack((od32, adc))
+            return clean, 33
+
+        print(f"FileLoader: Error - Insufficient columns {cols}")
+        return None, 0
 
     except Exception as e:
         print(f"FileLoader: Error loading numpy data: {e}")

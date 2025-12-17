@@ -319,51 +319,21 @@ class MainWindow(QMainWindow):
                         """)
 
     def _update_data_display(self):
-        # Update UI once per tick while streaming
         if not self.streamer.is_streaming:
             return
 
-        # Get the next sample that will be streamed
-        sample = self.data_generator.generate_sample()
-
-        # --- Update Playback UI if in playback mode ---
-        if self.app_state == 'playback':
-            cur_idx, total = self.data_generator.get_playback_status()
-            rate = self.streamer.sample_rate or 1
-
-            # Update Slider (Block signals to prevent loop)
-            self.seek_slider.blockSignals(True)
-            self.seek_slider.setValue(cur_idx)
-            self.seek_slider.blockSignals(False)
-
-            # Update Time Label
-            current_seconds = cur_idx / rate
-            self.lbl_current_time.setText(self._format_time(current_seconds))
-
-            # Auto-stop if end reached
-            if cur_idx >= total - 1:
-                self._stop_playback()
-
-        #  Build pad payloads: each item = (i850, i760) for 4 channels
-        def to_pairs(chunk16):
-            # chunk16 = 16 numbers = 8 streams = 4 channels × (850,760) FOR THIS PAD
-            return [(chunk16[2 * i], chunk16[2 * i + 1]) for i in range(4)]
-
-        if len(sample) >= 32:
-            rx1 = sample[0:16]  # receiver 1 → left pad
-            rx2 = sample[16:32]  # receiver 2 → right pad
-            left_items = to_pairs(rx1)
-            right_items = to_pairs(rx2)
-        elif len(sample) == 16:
-            # Single-receiver data: show on left; clear right
-            rx = sample[0:16]
-            left_items = to_pairs(rx)
-            right_items = [(float('nan'), float('nan'))] * 4
-        else:
-            # Unexpected width; skip this tick safely
+        sample = self.streamer.last_sample
+        if sample is None or len(sample) != 33:
             return
 
-        # Update pads
+        od = sample[:32]
+
+        # Left: Rx1 L1..L8 -> group into 4 (850,760) pairs
+        left_items = [(od[0], od[1]), (od[2], od[3]), (od[4], od[5]), (od[6], od[7])]
+
+        # Right: Rx2 L9..L16 sits at OD indices 24..31 -> group into 4 pairs
+        right_items = [(od[24], od[25]), (od[26], od[27]), (od[28], od[29]), (od[30], od[31])]
+
         self.left_pad.update_raw_channels(left_items)
         self.right_pad.update_raw_channels(right_items)
 

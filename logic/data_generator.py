@@ -9,7 +9,7 @@ class DataGenerator:
     def __init__(self):
         # Initializes the DataGenerator.
         self.start_time = time.time()
-        self.state = "Calm / Baseline"
+        self.state = "Calm"
         self.state_start_time = self.start_time
 
         # --- File Playback Properties ---
@@ -35,18 +35,24 @@ class DataGenerator:
         self.state_start_time = time.time()
 
     def load_file_data(self, data, num_channels):
-        """Loads file data (rows of 16 or 32 values). Controller should also set LSL rate from header."""
+        # Loads file data (rows of 33 values: OD32 + ADC1).
         self.file_data = np.asarray(data, dtype=float)
         self.num_channels = int(num_channels)
         self.playback_index = 0
-        print(f"DataGenerator: Loaded file data with {self.num_channels} channels.")
+
+        # If we loaded 16 channels (8 physical), ensure config matches
+        if self.num_channels == 16 and config.NUM_CHANNELS != 16:
+            # This is fine, just a log note
+            pass
+
+        print(f"DataGenerator: Loaded file data with {self.num_channels} raw values per sample.")
 
     def unload_file_data(self):
         # Clears the file data and resets to default.
         self.file_data = None
         self.playback_index = 0
         self.num_channels = config.NUM_CHANNELS
-        print("DataGenerator: Unloaded file data. Reverting to live simulation (32 raw channels).")
+        print("DataGenerator: Unloaded file data. Reverting to live simulation (33 values: OD32 + ADC1).")
 
     def get_playback_status(self):
         """Returns the current playback index and total samples."""
@@ -55,74 +61,82 @@ class DataGenerator:
         return 0, 0
 
     def _generate_live_sample(self):
-        """Generate one live raw sample: 32 values = (Rx1 8 pairs + Rx2 8 pairs) × (850,760)."""
+        # Generate one live sample: 33 values = OD32 (OxySoft order) + ADC1
         t = time.time() - self.start_time
         st = time.time() - self.state_start_time
-        freq_variation = [1.2 + i * 0.05 for i in range(8)]
 
         # State-dependent offset (HRF or artifacts)
-        signal_offset_base  = 0.0
+        signal_offset_base = 0.0
         if self.state == "Cognitive Load":
             cycle = st % 30.0
             if cycle < 20.0:
-                signal_offset_base  = self._generate_hrf_shape(cycle) * config.HRF_SCALE
+                signal_offset_base = self._generate_hrf_shape(cycle)
         elif self.state == "Artifact":
             if (st % 4.0) < 1.0:
-                signal_offset_base  = np.random.uniform(-config.ARTIFACT_SCALE, config.ARTIFACT_SCALE)
+                signal_offset_base = np.random.uniform(-config.ARTIFACT_SCALE, config.ARTIFACT_SCALE)
 
-        base_I = config.BASE_INTENSITY
-
-        def make_rx(rx_bias: float, rx_index: int):
+        def make_rx_active8(rx_bias: float, rx_index: int, ch_offset: int):
+            """
+            Returns 8 OD values = 4 physical channels × 2 wavelengths (850,760)
+            Ordered as: [Ch0_850, Ch0_760, Ch1_850, Ch1_760, Ch2_850, Ch2_760, Ch3_850, Ch3_760]
+            """
             out = []
-            for ch in range(8):  # 8 physical channels
-                # Per-channel parameters
+            for j in range(4):
+                ch = ch_offset + j  # select which of the 8 personalities to use (0..7)
+
                 freq = self.channel_freq[ch]
-                phase = self.channel_phase[ch] + rx_index * 0.3  # small extra phase per receiver
+                phase = self.channel_phase[ch] + rx_index * 0.3
                 gain = self.channel_gain[ch]
                 hrf_gain = self.channel_hrf_gain[ch]
 
-                # small physiological baseline oscillation (per-channel)
                 base_noise = (
                         config.NOISE_A * gain * math.sin(2 * math.pi * freq * t + phase) +
                         config.NOISE_B * math.sin(2 * math.pi * 0.25 * t + phase * 0.3)
                 )
 
-                # Per-channel state offset
                 local_offset = signal_offset_base * hrf_gain
 
-                # For artifacts, add a bit of extra random per-channel wiggle
                 if self.state == "Artifact" and signal_offset_base != 0.0:
                     jitter = np.random.uniform(-config.ARTIFACT_SCALE, config.ARTIFACT_SCALE)
                     local_offset += jitter * (0.5 + 0.5 * gain)
 
-                # random sensor jitter
                 eps = np.random.normal(0.0, config.JITTER_STD)
 
-                i850 = (
-                                   base_I + rx_bias + base_noise + eps + 0.4 * local_offset) * config.WL850_GAIN + config.WL850_BIAS
-                i760 = (
-                                   base_I + rx_bias + base_noise + eps - 1.0 * local_offset) * config.WL760_GAIN + config.WL760_BIAS
+                # Absolute OD baseline similar scale to real data
+                od_baseline = 0.9 + 0.1 * gain
 
-                # order: (850, 760)
-                out.extend([i850, i760])
+                # Two "wavelength" OD values per physical channel.
+                # Keep the same dynamics but slightly different scaling between 850/760.
+                od_850 = od_baseline + rx_bias + base_noise + eps + 0.4 * local_offset
+                od_760 = od_baseline + rx_bias + base_noise + eps - 1.0 * local_offset
+
+                out.extend([od_850, od_760])
 
             return out
 
-        # Two healthy receivers with a tiny offset so they differ slightly
-        rx1 = make_rx(0.000, 0)   # receiver 1
-        rx2 = make_rx(0.005, 1)   # receiver 2
+        ph = config.PLACEHOLDER_HI
 
-        return rx1 + rx2  # 32 values
+        # OctaMon split layout for OxySoft OD32:
+        # Rx1 L1..L8 active (4ch×2λ), L9..L16 placeholder
+        rx1_active8 = make_rx_active8(rx_bias=0.000, rx_index=0, ch_offset=0)
+        rx1_od16 = rx1_active8 + [ph] * 8
+
+        # Rx2 L1..L8 placeholder, L9..L16 active (4ch×2λ)
+        rx2_active8 = make_rx_active8(rx_bias=0.005, rx_index=1, ch_offset=4)
+        rx2_od16 = [ph] * 8 + rx2_active8
+
+        od32 = rx1_od16 + rx2_od16
+        return od32 + [config.ADC_DEFAULT]
 
     def _generate_playback_sample(self):
         """Return next row from file, converting to raw-like intensity if needed."""
         if self.file_data is None:
-            return [0.0] * self.num_channels
+            return [0.0] * config.NUM_CHANNELS
 
         row = self.file_data[self.playback_index]
         self.playback_index = (self.playback_index + 1) % len(self.file_data)
 
-        return row[: self.num_channels]
+        return row[:config.NUM_CHANNELS]
 
     def generate_sample(self):
         # Generates a sample based on the current mode (live or playback).
