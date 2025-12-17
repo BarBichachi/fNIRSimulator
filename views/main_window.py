@@ -245,7 +245,7 @@ class MainWindow(QMainWindow):
         total_samples = self.data_generator.get_total_samples()
 
         self.lbl_total_time.setText(self._format_time(total_seconds))
-        self.seek_slider.setRange(0, total_samples)
+        self.seek_slider.setRange(0, max(0, total_samples - 1))
         self.seek_slider.setValue(0)
 
         self.app_state = 'playback'
@@ -319,20 +319,56 @@ class MainWindow(QMainWindow):
                         """)
 
     def _update_data_display(self):
+        # Update UI once per tick while streaming
         if not self.streamer.is_streaming:
             return
 
         sample = self.streamer.last_sample
-        if sample is None or len(sample) != 33:
+        if sample is None:
             return
 
-        od = sample[:32]
+        # --- Playback UI (authoritative: what we streamed) ---
+        if self.app_state == 'playback':
+            rate = float(self.streamer.sample_rate or 1.0)
+            total = int(self.data_generator.get_total_samples())
 
-        # Left: Rx1 L1..L8 -> group into 4 (850,760) pairs
-        left_items = [(od[0], od[1]), (od[2], od[3]), (od[4], od[5]), (od[6], od[7])]
+            # Current index is "how many samples already sent"
+            cur_idx = int(self.streamer.samples_sent)
+            cur_idx = max(0, min(cur_idx, max(0, total - 1)))
 
-        # Right: Rx2 L9..L16 sits at OD indices 24..31 -> group into 4 pairs
-        right_items = [(od[24], od[25]), (od[26], od[27]), (od[28], od[29]), (od[30], od[31])]
+            # Slider + current time
+            self.seek_slider.blockSignals(True)
+            self.seek_slider.setValue(cur_idx)
+            self.seek_slider.blockSignals(False)
+
+            self.lbl_current_time.setText(self._format_time(cur_idx / rate))
+
+            # Auto-stop at end
+            if total > 0 and cur_idx >= total - 1:
+                self._stop_playback()
+                return
+
+        # --- OxySoft sample parsing: OD32 + ADC1 ---
+        if len(sample) != 33:
+            return
+
+        od32 = sample[:32]
+
+        # Left pad (Rx1 L1..L8) -> indices 0..7, shown as 4 pairs
+        left_items = [
+            (od32[0], od32[1]),
+            (od32[2], od32[3]),
+            (od32[4], od32[5]),
+            (od32[6], od32[7]),
+        ]
+
+        # Right pad (Rx2 L9..L16) -> indices 24..31, shown as 4 pairs
+        right_items = [
+            (od32[24], od32[25]),
+            (od32[26], od32[27]),
+            (od32[28], od32[29]),
+            (od32[30], od32[31]),
+        ]
 
         self.left_pad.update_raw_channels(left_items)
         self.right_pad.update_raw_channels(right_items)
@@ -348,6 +384,9 @@ class MainWindow(QMainWindow):
         should_play = self.play_pause_btn.isChecked()
 
         if should_play:
+            start_idx = int(self.seek_slider.value())
+            self.data_generator.set_playback_index(start_idx)
+            self.streamer.samples_sent = start_idx
             self.streamer.start()
             self.ui_update_timer.start()
             self.play_pause_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPause))

@@ -43,8 +43,8 @@ class OptodePadWidget(QWidget):
         grid.addWidget(tx1_pair, 0, 0, Qt.AlignmentFlag.AlignCenter)
         grid.addWidget(tx2_pair, 0, 1, Qt.AlignmentFlag.AlignCenter)
         grid.addWidget(rx_widget, 1, 0, 1, 2, Qt.AlignmentFlag.AlignCenter)  # Span receiver
-        grid.addWidget(tx4_pair, 2, 0, Qt.AlignmentFlag.AlignCenter)
-        grid.addWidget(tx3_pair, 2, 1, Qt.AlignmentFlag.AlignCenter)
+        grid.addWidget(tx3_pair, 2, 0, Qt.AlignmentFlag.AlignCenter)
+        grid.addWidget(tx4_pair, 2, 1, Qt.AlignmentFlag.AlignCenter)
 
     def _create_tx_pair(self, tx_num, channel_label_text):
         # Creates a container with a transmitter and its OD(850/760) labels

@@ -15,6 +15,7 @@ class LSLStreamer:
         self.lsl_thread = None
         self.sample_rate = config.SAMPLE_RATE  # Default to config's live rate
         self.last_sample = None  # UI reads this (do not advance generator in UI)
+        self.samples_sent = 0
 
     def set_sample_rate(self, rate):
         """Sets the streaming sample rate (e.g., 10Hz from file)."""
@@ -61,10 +62,14 @@ class LSLStreamer:
             sample = self.data_generator.generate_sample()
             self.last_sample = sample
             self.lsl_outlet.push_sample(sample, local_clock())
+            self.samples_sent += 1
 
             now = time.perf_counter()
             remaining = next_t - now
             if remaining > 0:
-                time.sleep(min(remaining, 0.01))
+                time.sleep(remaining)
+            else:
+                # We're behind; resync to avoid drift runaway
+                next_t = now
 
         print("LSL stream stopped.")
