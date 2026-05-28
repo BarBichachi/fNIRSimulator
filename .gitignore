@@ -1,1 +1,6 @@
 /tools/full_project_code.txt
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
