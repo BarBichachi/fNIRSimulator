@@ -60,6 +60,12 @@ class LSLStreamer:
             next_t += period
 
             sample = self.data_generator.generate_sample()
+            if sample is None:
+                # End of file reached in playback mode. Stop pushing so downstream
+                # consumers see a clean end-of-stream rather than wrapped samples.
+                self.is_streaming = False
+                break
+
             self.last_sample = sample
             self.lsl_outlet.push_sample(sample, local_clock())
             self.samples_sent += 1

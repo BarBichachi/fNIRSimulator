@@ -319,7 +319,17 @@ class MainWindow(QMainWindow):
                         """)
 
     def _update_data_display(self):
-        # Update UI once per tick while streaming
+        # Detect natural end-of-file in playback mode: the streamer self-stopped
+        # because the generator returned None. All user-initiated stops (Stop,
+        # Pause, slider press) also stop the UI timer, so reaching this branch
+        # with the timer still firing means EOF.
+        if (self.app_state == 'playback'
+                and not self.streamer.is_streaming
+                and self.data_generator.get_total_samples() > 0
+                and self.streamer.samples_sent >= self.data_generator.get_total_samples()):
+            self._stop_playback()
+            return
+
         if not self.streamer.is_streaming:
             return
 
@@ -342,11 +352,6 @@ class MainWindow(QMainWindow):
             self.seek_slider.blockSignals(False)
 
             self.lbl_current_time.setText(self._format_time(cur_idx / rate))
-
-            # Auto-stop at end
-            if total > 0 and cur_idx >= total - 1:
-                self._stop_playback()
-                return
 
         # --- OxySoft sample parsing: OD32 + ADC1 ---
         if len(sample) != 33:
@@ -432,6 +437,9 @@ class MainWindow(QMainWindow):
 
     def _on_slider_released(self):
         """Resume playback if it was playing before drag."""
+        # Sync the streamer's sample counter to the new slider position so the
+        # next UI tick does not snap the slider back to the pre-seek index.
+        self.streamer.samples_sent = int(self.seek_slider.value())
         if self.was_playing_before_drag:
             self.streamer.start()
             self.ui_update_timer.start()
@@ -448,6 +456,3 @@ class MainWindow(QMainWindow):
     def _set_state_label(self, state_text, color):
         """Helper to format state label with consistent styling."""
         self.current_state_label.setText(f"State: <span style='color: {color}; font-weight: bold;'>{state_text}</span>")
-
-
-        # FIX STATE LABEL MODE LABEL

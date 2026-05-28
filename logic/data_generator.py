@@ -129,13 +129,16 @@ class DataGenerator:
         return od32 + [config.ADC_DEFAULT]
 
     def _generate_playback_sample(self):
-        """Return next row from file, converting to raw-like intensity if needed."""
+        """Return next row from file, or None when the end of the file is reached.
+        Returning None signals end-of-stream to the streamer instead of wrapping
+        back to the start (which would leak stale samples after EOF)."""
         if self.file_data is None:
-            return [0.0] * config.NUM_CHANNELS
+            return None
+        if self.playback_index >= len(self.file_data):
+            return None
 
         row = self.file_data[self.playback_index]
-        self.playback_index = (self.playback_index + 1) % len(self.file_data)
-
+        self.playback_index += 1
         return row[:config.NUM_CHANNELS]
 
     def generate_sample(self):
