@@ -4,3 +4,7 @@
 __pycache__/
 *.pyc
 *.pyo
+
+# Virtualenv and IDE
+.venv/
+.idea/
